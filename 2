@@ -1,0 +1,166 @@
+import streamlit as st
+import pandas as pd
+import random
+
+# --- 1. 참가자 명단 설정 (요청하신 24명 이름으로 수정 완료) ---
+PARTICIPANTS = [
+    "단비", "창우", "주희", "온유", "유민", "주형", 
+    "예슬", "도현", "성현", "신영", "준일", "주황",
+    "진수", "영찬", "다연", "예원", "주현", "총명",
+    "연제", "윤아", "마리아", "규진", "주한", "건양"
+]
+
+# --- 2. 카톡 스타일 디자인 (CSS) ---
+st.set_page_config(page_title="💘 환승 마니또 : X-Signal", layout="centered")
+
+st.markdown("""
+    <style>
+    .stApp { background-color: #abc1d1; } /* 카톡 배경색 */
+    .chat-bubble-me {
+        display: flex; justify-content: flex-end; margin-bottom: 10px;
+    }
+    .chat-bubble-other {
+        display: flex; justify-content: flex-start; margin-bottom: 10px;
+    }
+    .bubble {
+        padding: 10px 15px; border-radius: 15px; max-width: 70%;
+        font-size: 16px; line-height: 1.5; position: relative;
+    }
+    .me { background-color: #fee500; color: black; }
+    .other { background-color: #ffffff; color: black; border: 1px solid #ddd; }
+    .nickname { font-size: 12px; color: #555; margin-bottom: 2px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 3. 데이터 초기화 (마니또 매칭 및 DB) ---
+if 'db' not in st.session_state:
+    targets = PARTICIPANTS[:]
+    while True:
+        random.shuffle(targets)
+        # 자기 자신을 마니또로 뽑지 않도록 검증
+        if all(PARTICIPANTS[i] != targets[i] for i in range(len(PARTICIPANTS))):
+            break
+    
+    db = {}
+    for i, name in enumerate(PARTICIPANTS):
+        target_name = targets[i]
+        db[name] = {
+            "nickname": f"{target_name}또", 
+            "target": target_name,
+            "status": "아직 선택되지 않았습니다.",
+            "messages": [] 
+        }
+    st.session_state.db = db
+    st.session_state.global_chat = []
+
+# --- 4. 로그인 로직 ---
+if 'user' not in st.session_state:
+    st.title("💘 환승 마니또 : X-Signal")
+    st.subheader("당신의 X는 당신을 기다리고 있습니다.")
+    
+    name_select = st.selectbox("이름을 선택하세요", ["선택하세요", "운영자"] + PARTICIPANTS)
+    
+    if name_select == "운영자":
+        pw = st.text_input("운영자 비밀번호", type="password")
+        if st.button("운영자 로그인"):
+            if pw == "1234": # 비밀번호는 여기서 수정 가능합니다.
+                st.session_state.user = "운영자"
+                st.rerun()
+            else: 
+                st.error("비밀번호가 틀렸습니다!")
+    elif name_select != "선택하세요":
+        if st.button("입장하기"):
+            st.session_state.user = name_select
+            st.rerun()
+            
+# --- 5. 메인 화면 ---
+else:
+    user = st.session_state.user
+    
+    # [운영자 모드]
+    if user == "운영자":
+        st.title("🕶️ 관제 센터 (운영자)")
+        if st.sidebar.button("로그아웃"): 
+            del st.session_state.user
+            st.rerun()
+            
+        st.subheader("📊 전체 매칭 현황")
+        m_data = [{"본명": k, "닉네임": v['nickname'], "대상": v['target'], "상태": v['status']} for k, v in st.session_state.db.items()]
+        st.table(pd.DataFrame(m_data))
+        
+        notice_msg = st.text_input("🚨 긴급 공지 전송")
+        if st.button("공지 올리기"):
+            if notice_msg:
+                st.session_state.global_chat.append({"name": "관리자", "msg": notice_msg, "is_notice": True})
+                st.success("공지가 전송되었습니다.")
+
+    # [사용자 모드]
+    else:
+        my_data = st.session_state.db[user]
+        
+        # 상단 바 정보
+        st.sidebar.title(f"👤 {my_data['nickname']}")
+        st.sidebar.write(f"나의 X(챙길 사람): **{my_data['target']}**")
+        st.sidebar.write(f"🔔 알림: {my_data['status']}")
+        if st.sidebar.button("로그아웃"):
+            del st.session_state.user
+            st.rerun()
+
+        tab1, tab2, tab3 = st.tabs(["💬 단체톡", "💌 X-메시지", "🎯 추리"])
+
+        # 탭 1: 단체톡
+        with tab1:
+            chat_input = st.chat_input("메시지를 입력하세요...")
+            if chat_input:
+                st.session_state.global_chat.append({"name": my_data['nickname'], "msg": chat_input, "is_notice": False})
+                st.rerun()
+
+            for chat in reversed(st.session_state.global_chat):
+                if chat.get("is_notice"):
+                    st.warning(f"📢 공지: {chat['msg']}")
+                else:
+                    is_me = (chat['name'] == my_data['nickname'])
+                    align = "chat-bubble-me" if is_me else "chat-bubble-other"
+                    b_type = "me" if is_me else "other"
+                    st.markdown(f"""
+                        <div class="{align}">
+                            <div>
+                                <div class="nickname" style="text-align: {'right' if is_me else 'left'};">{chat['name']}</div>
+                                <div class="bubble {b_type}">{chat['msg']}</div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+        # 탭 2: 1:1 비밀 메시지
+        with tab2:
+            st.subheader(f"내 X({my_data['target']})에게 보내기")
+            s_msg = st.text_input("익명 쪽지를 보내세요", key="secret_input")
+            if st.button("쪽지 발송"):
+                if s_msg:
+                    st.session_state.db[my_data['target']]['messages'].append(f"X로부터: {s_msg}")
+                    st.success(f"{my_data['target']}님에게 익명 쪽지를 보냈습니다!")
+            
+            st.divider()
+            st.subheader("나에게 온 쪽지")
+            if not my_data['messages']:
+                st.write("아직 도착한 쪽지가 없습니다.")
+            for m in reversed(my_data['messages']):
+                st.info(m)
+
+        # 탭 3: 정답 맞히기
+        with tab3:
+            st.subheader("당신의 X는 누구입니까?")
+            st.write("나를 챙겨주고 있는 '진짜 마니또'를 찾아보세요.")
+            guess = st.selectbox("의심되는 사람 선택", ["선택하세요"] + PARTICIPANTS)
+            if st.button("최종 선택 확인"):
+                if guess != "선택하세요":
+                    # 나를 챙겨주는 사람(진짜 내 마니또) 찾기
+                    real_x = [k for k, v in st.session_state.db.items() if v['target'] == user][0]
+                    
+                    if guess == real_x:
+                        st.balloons()
+                        st.success(f"정답입니다! 당신의 마니또는 {real_x}님이 맞습니다. 🎯")
+                        st.session_state.db[real_x]['status'] = "당신의 마니또가 당신을 선택했습니다! ❤️"
+                    else:
+                        st.error("틀렸습니다! 당신의 마니또가 아닙니다. 🤫")
+                        st.session_state.db[real_x]['status'] = "당신의 마니또가 당신을 선택하지 않았습니다. 💔"
